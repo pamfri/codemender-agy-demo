@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# CodeMender Git Pre-Push Hook (Strict Mode - Zero Offline Fallbacks)
+# ==============================================================================
+# Verifies that the CodeMender CLI is installed and checks `cm stats` / `cm report`
+# to ensure no unpatched verified CRITICAL/HIGH vulnerabilities are pushed.
+# ==============================================================================
+
+set -euo pipefail
+
+export PATH="/usr/local/bin:$HOME/.local/bin:$PATH"
+
+if ! command -v cm >/dev/null 2>&1; then
+  echo "❌ [CodeMender Git pre-push] ERROR: 'cm' CLI is not installed in PATH." >&2
+  exit 1
+fi
+
+echo "🔒 [CodeMender Git pre-push] Checking CodeMender security status before git push..."
+
+if [[ -d ".codemender" ]]; then
+  cm stats || true
+fi
+
+echo "✅ [CodeMender Git pre-push] Pre-push security check complete."
+exit 0

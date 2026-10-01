@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# CodeMender Git Pre-Commit Hook (Strict Mode - Zero Offline Fallbacks)
+# ==============================================================================
+# Automatically scans staged source files with CodeMender (`cm find`) before
+# allowing a `git commit`. Blocks the commit (`exit 1`) if:
+#   1. The `cm` CLI is not installed, or
+#   2. CodeMender detects any security vulnerability in the staged files.
+# ==============================================================================
+
+set -euo pipefail
+
+export PATH="/usr/local/bin:$HOME/.local/bin:$PATH"
+
+# 1. Verify CodeMender CLI is installed (no offline fallback allowed)
+if ! command -v cm >/dev/null 2>&1; then
+  echo "❌ [CodeMender Git pre-commit] ERROR: 'cm' CLI is not installed in PATH." >&2
+  echo "   Install CodeMender CLI before committing, or set PATH to include /usr/local/bin." >&2
+  exit 1
+fi
+
+# 2. Get list of staged code files (Added, Copied, Modified)
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(js|ts|py|go|java|rb|php|c|cc|cpp|rs)$' || true)
+
+if [[ -z "${STAGED_FILES}" ]]; then
+  echo "✅ [CodeMender Git pre-commit] No staged source code files to scan."
+  exit 0
+fi
+
+# Ensure CodeMender workspace is initialized
+if [[ ! -d ".codemender" ]]; then
+  echo "🔧 [CodeMender Git pre-commit] Initializing CodeMender workspace (.codemender)..."
+  cm init --verify >/dev/null 2>&1 || cm init
+fi
+
+echo "🔍 [CodeMender Git pre-commit] Scanning staged files with CodeMender (gemini-3.7-flash)..."
+
+BLOCKED=0
+
+for FILE in ${STAGED_FILES}; do
+  if [[ ! -f "${FILE}" ]]; then
+    continue
+  fi
+
+  echo "   → Auditing ${FILE}..."
+  SCAN_OUTPUT=$(cm find --model gemini-3.7-flash -y --compact "${FILE}" 2>&1) || {
+    echo "❌ [CodeMender Git pre-commit] 'cm find' execution failed on ${FILE}:" >&2
+    echo "${SCAN_OUTPUT}" >&2
+    echo "   Ensure GCP_PROJECT_ID is exported and gcloud ADC credentials are active." >&2
+    exit 1
+  }
+
+  echo "${SCAN_OUTPUT}"
+
+  # Check if CodeMender reported any HIGH/CRITICAL/MEDIUM findings or finding IDs
+  if echo "${SCAN_OUTPUT}" | grep -qE '\[(CRITICAL|HIGH|MEDIUM)\]|Found [1-9][0-9]* potential'; then
+    echo "" >&2
+    echo "🚨 [CodeMender Git pre-commit] COMMIT BLOCKED: Vulnerability detected in '${FILE}'!" >&2
+    echo "   Run 'cm verify <finding-id>' and 'cm fix <finding-id> -y' before committing." >&2
+    BLOCKED=1
+  fi
+done
+
+if [[ "${BLOCKED}" -ne 0 ]]; then
+  exit 1
+fi
+
+echo "✅ [CodeMender Git pre-commit] All staged files passed CodeMender security gate."
+exit 0

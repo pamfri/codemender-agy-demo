@@ -1,0 +1,84 @@
+# ==============================================================================
+# CodeMender Autonomous Security CI/CD Pipeline
+# Strictly requires Google Cloud WIF authentication (`GCP_PROJECT_ID`) and `cm` CLI.
+# Zero offline fallbacks: fails immediately if `cm` or GCP authentication fails.
+# ==============================================================================
+name: CodeMender Autonomous Security & PoC Verification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  security-events: write
+  pull-requests: write
+
+env:
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GOOGLE_CLOUD_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+  GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+  GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+  CM_CLI_DOWNLOAD_URL: ${{ vars.CM_CLI_DOWNLOAD_URL }}
+  CODEMENDER_MODEL: gemini-3.7-flash
+
+jobs:
+  codemender-scan-and-verify:
+    name: CodeMender Scan, PoC Verify & SARIF Upload
+    runs-on: ubuntu-latest
+    steps:
+      - name: 1. Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 2. Keyless GCP Authentication via Workload Identity Federation (WIF)
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - name: 3. Install CodeMender CLI (`cm`)
+        run: |
+          if [[ -z "${CM_CLI_DOWNLOAD_URL}" ]]; then
+            echo "❌ ERROR: Repository variable CM_CLI_DOWNLOAD_URL is not configured." >&2
+            exit 1
+          fi
+          curl -fsSL -o cm-linux-amd64.zip "${CM_CLI_DOWNLOAD_URL}"
+          unzip -o cm-linux-amd64.zip
+          chmod +x cm
+          sudo mv cm /usr/local/bin/cm
+          cm --version
+
+      - name: 4. Verify `cm` CLI & `GCP_PROJECT_ID` Pre-Flight Checks
+        run: |
+          bash ./scripts/check-prerequisites.sh
+          cm init --verify
+
+      - name: 5. Run Baseline Functional & PoC Regression Checks
+        run: |
+          node examples/pillar-1-ide-guardrails/test.js
+          bash examples/pillar-3-agent-skills/3_poc_exploit.sh
+
+      - name: 6. Run CodeMender Headless Discovery (`cm find`) via Vertex AI
+        run: |
+          cm find examples/ \
+            --model "${CODEMENDER_MODEL}" \
+            -c "Audit user input flowing into SQL queries, HTML templates, subprocesses, and file paths." \
+            -y --compact
+
+      - name: 7. Run Live Sandbox PoC Verification (`cm verify`) & Export SARIF
+        run: |
+          cm verify --all -y --compact
+          cm report --format sarif > codemender-results.sarif
+
+      - name: 8. Upload Verified SARIF Findings to GitHub Security Tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: codemender-results.sarif
+          category: codemender-verified-pocs

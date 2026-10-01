@@ -1,0 +1,17 @@
+{
+  "codemender-security-gate": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "write_to_file|replace_file_content",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.gemini/config/hooks/post_edit_codemender_hook.sh",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}

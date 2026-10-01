@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "codemender-mcp": {
+      "command": "python3",
+      "args": [
+        "~/.gemini/config/codemender_mcp_server.py"
+      ],
+      "env": {
+        "PATH": "/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin",
+        "GCP_PROJECT_ID": "<YOUR_GCP_PROJECT_ID>"
+      }
+    }
+  }
+}
